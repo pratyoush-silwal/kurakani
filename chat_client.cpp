@@ -49,12 +49,14 @@ private:
 
     void ask_name() {
         std::cout << "Enter your name: ";
+        std::flush(std::cout); // Force flush to display the prompt immediately
         std::getline(std::cin, name_);
         ask_password();
     }
 
     void ask_password() {
         std::cout << "Enter your password: ";
+        std::flush(std::cout); // Force flush to display the prompt immediately
         std::getline(std::cin, password_);
         send_registration();
     }
