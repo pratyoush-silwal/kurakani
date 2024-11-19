@@ -32,12 +32,13 @@ public:
         do_read_header();
     }
 
-    void send_message(const std::string& message, const std::string& msg_id_ = "", std::uint64_t reciever_id = 3) {
+	//sends message to the client
+    void send_message(const std::string& message, const std::string& msg_id_ = "", std::uint64_t sender_id = 3) {
         chat_message msg;
         msg.body_length(message.size());
         std::memcpy(msg.body(), message.c_str(), msg.body_length());
-        msg.encode_header(msg_id_, client_id_, reciever_id);
-
+        msg.encode_header(msg_id_, sender_id, client_id_);
+		std::cout << "sending message from " << sender_id << " to " << client_id_ << std::endl;
         auto self(shared_from_this());
         boost::asio::async_write(socket_, boost::asio::buffer(msg.data(), msg.length()), 
             [this, self](boost::system::error_code ec, std::size_t) {
@@ -127,24 +128,47 @@ private:
             for (const auto& client : clients_) {
                 std::cout << "ID: " << client.second.id << ", Name: " << client.second.name << std::endl;
             }
-            send_message("Chat request is being proccessed", "#REG", client_id_);
+            send_message("Chat request is being proccessed", "#REG");
             if (clients_.find(reciever_id) != clients_.end()) {
-                send_message("Chat request sent to " + clients_[reciever_id].name, "#REG", client_id_);
+                send_message("Chat request sent to " + clients_[reciever_id].name, "#REG");
                 if (sessions_.find(reciever_id) != sessions_.end()) {
-                    sessions_[reciever_id]->send_message("MESSAGE REQUEST!!! ", "#C_C", reciever_id);
+                    sessions_[reciever_id]->send_message("", "#C_C", client_id_);
                 }
                 else {
-                    send_message("Failed to send chat request", "#REG", client_id_);
+                    send_message("Failed to send chat request", "#REG");
                 }
             }
             else {
-                send_message("could not find the id", "#REG", client_id_);
+                send_message("could not find the id", "#REG");
             }
         }
 
+        else if (read_msg_.get_message_id() == "#C_D") {
+            std::uint64_t reciever_id_ = read_msg_.get_receiver_id();
+            sessions_[reciever_id_]->send_message("Message Request Denied", "#C_D", client_id_);
+        }
+
+        else if (read_msg_.get_message_id() == "#C_A") {
+            std::uint64_t reciever_id_ = read_msg_.get_receiver_id();
+            //sessions_[reciever_id_]->send_message("Message Request Accepted", "#C_A", reciever_id_);
+            if (sessions_.find(reciever_id_) != sessions_.end() && sessions_[reciever_id_]) {
+                sessions_[reciever_id_]->send_message("Message Request Accepted", "#C_A", client_id_);
+            }
+            else {
+                send_message("Failed to send chat request", "#REG");
+            }
+        }
+
+        else if (read_msg_.get_message_id() == "#S_M") {
+            std::uint64_t reciever_id_ = read_msg_.get_receiver_id();
+			std::cout << "sending message :" << read_msg_.body() << " to " << reciever_id_ << std::endl;
+            sessions_[reciever_id_]->send_message(msg_str, "#S_M", client_id_);
+        }
         else {
             send_message("Unknown command: " + msg_str);
         }
+        msg_str = "";
+        read_msg_ = chat_message(); // Clear all data in read_msg_
     }
 
     void handle_disconnect() {
