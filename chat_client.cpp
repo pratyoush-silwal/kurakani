@@ -2,6 +2,7 @@
 #include <deque>
 #include <iostream>
 #include <chrono>
+#include <string>
 #include <thread>
 #include <boost/asio.hpp>
 #include "chat_message.hpp"
@@ -268,8 +269,8 @@ int main(int argc, char* argv[]) {
             else if (line == "#S_M") {
 				std::uint64_t reciever = c.getreciever_id();
                 std::cout << "enter message: ";
-                char msg[500];
-                std::cin >> msg;
+                std::string msg;
+                std::getline(std::cin, msg);
                 message(c, "#S_M", msg, reciever);
             }
         }
