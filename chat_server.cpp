@@ -1,3 +1,5 @@
+// server.cpp
+
 #include <iostream>
 #include <boost/asio.hpp>
 #include <unordered_map>
@@ -8,22 +10,55 @@
 
 using boost::asio::ip::tcp;
 
+// Define the global clients map
+struct client_info {
+    std::uint64_t id;
+    std::string name;
+    std::string password;
+};
+
+std::unordered_map<std::uint64_t, client_info> clients_;
+
+// Define the global sessions map each sessions_ entry is a pair of client ID and a shared pointer to a chat_session object
+std::unordered_map<std::uint64_t, std::shared_ptr<class chat_session>> sessions_;
+
 class chat_session : public std::enable_shared_from_this<chat_session> {
 public:
     explicit chat_session(tcp::socket socket)
-        : socket_(std::move(socket)) {}
+        : socket_(std::move(socket)), client_id_(0) {
+    }
 
     void start() {
         do_read_header();
     }
 
+    void send_message(const std::string& message, const std::string& msg_id_ = "", std::uint64_t reciever_id = 3) {
+        chat_message msg;
+        msg.body_length(message.size());
+        std::memcpy(msg.body(), message.c_str(), msg.body_length());
+        msg.encode_header(msg_id_, client_id_, reciever_id);
+
+        auto self(shared_from_this());
+        boost::asio::async_write(socket_, boost::asio::buffer(msg.data(), msg.length()), 
+            [this, self](boost::system::error_code ec, std::size_t) {
+                if (ec) {
+                    handle_disconnect();
+                }
+            });
+    }
+
+    std::uint64_t get_client_id() const {
+        return client_id_;
+    }
 private:
+	//reads the header and checks the format of the message
     void do_read_header() {
         auto self(shared_from_this());
         boost::asio::async_read(socket_,
             boost::asio::buffer(read_msg_.data(), chat_message::header_length),
             [this, self](boost::system::error_code ec, std::size_t) {
                 if (!ec && read_msg_.decode_header()) {
+                    std::cout << read_msg_.get_message_id() << std::endl;
                     do_read_body();
                 }
                 else {
@@ -32,6 +67,7 @@ private:
             });
     }
 
+	//reads the message body and handles the message
     void do_read_body() {
         auto self(shared_from_this());
         boost::asio::async_read(socket_,
@@ -47,21 +83,65 @@ private:
             });
     }
 
+    //handles different format of messages
     void handle_message() {
         std::string msg_str(read_msg_.body(), read_msg_.body_length());
-        if (msg_str.find("#REG:") == 0) {
+
+		//registers a new account and adds it to the clients_ map and sessions_ map
+        if (read_msg_.get_message_id() == "#REG") {
+            std::cout << read_msg_.body() << std::endl;
             auto parts = split_string(msg_str, ':');
-            if (parts.size() == 4) {
-                int id = std::stoi(parts[1]);
-                std::string name = parts[2];
-                std::string password = parts[3];
-                clients_[id] = { id, name, password };
-                send_message("Registration successful!");
+            std::cout << "splinting the string" << std::endl;
+            if (parts.size() == 2) {
+                std::string name = parts[0];
+                std::string password = parts[1];
+                
+                
+                client_id_ = read_msg_.get_sender_id();
+                clients_[client_id_] = { client_id_, name, password };
+                send_message( "Registration successful", "#REG");
+                /*client_id_ = read_msg_.get_sender_id()*/;
+                /*sessions_[id] = std::make_shared<chat_session>(std::move(socket_));*/
+                sessions_[client_id_] = shared_from_this();
+                send_message("added chat session to the map", "#REG" );
+			}
+			else {
+				send_message("Invalid registration format.", "#REG");
+			}
+        }
+        //retrives all the clients from server and sends them to the client
+        else if (read_msg_.get_message_id() == "#S_C") {
+            std::ostringstream oss;
+            for (const auto& client : clients_) {
+                oss << "ID: " << std::fixed << client.second.id << ", Name: " << client.second.name << "\n";
+            }
+            send_message(oss.str(), "#S_C");
+        }
+        //sends message to specific client based on id to start chatting
+        else if (read_msg_.get_message_id() == "#C_C") {
+            // Extract the integer value from the message string
+            std::uint64_t reciever_id = read_msg_.get_receiver_id();
+            // Log the receiver ID and the contents of the clients_ map
+            std::cout << "Receiver ID: " << reciever_id << std::endl;
+            std::cout << "Clients map contents:" << std::endl;
+            for (const auto& client : clients_) {
+                std::cout << "ID: " << client.second.id << ", Name: " << client.second.name << std::endl;
+            }
+            send_message("Chat request is being proccessed", "#REG", client_id_);
+            if (clients_.find(reciever_id) != clients_.end()) {
+                send_message("Chat request sent to " + clients_[reciever_id].name, "#REG", client_id_);
+                if (sessions_.find(reciever_id) != sessions_.end()) {
+                    sessions_[reciever_id]->send_message("MESSAGE REQUEST!!! ", "#C_C", reciever_id);
+                }
+                else {
+                    send_message("Failed to send chat request", "#REG", client_id_);
+                }
             }
             else {
-                send_message("Invalid registration format.");
+                send_message("could not find the id", "#REG", client_id_);
             }
         }
+
         else {
             send_message("Unknown command: " + msg_str);
         }
@@ -69,23 +149,14 @@ private:
 
     void handle_disconnect() {
         std::cerr << "Client disconnected.\n";
+        if (client_id_ != 0) {
+            sessions_.erase(client_id_);
+			clients_.erase(client_id_);
+        }
         socket_.close();
     }
 
-    void send_message(const std::string& message) {
-        chat_message msg;
-        msg.body_length(message.size());
-        std::memcpy(msg.body(), message.c_str(), msg.body_length());
-        msg.encode_header();
-
-        auto self(shared_from_this());
-        boost::asio::async_write(socket_, boost::asio::buffer(msg.data(), msg.length()),
-            [this, self](boost::system::error_code ec, std::size_t) {
-                if (ec) {
-                    handle_disconnect();
-                }
-            });
-    }
+    
 
     std::vector<std::string> split_string(const std::string& str, char delimiter) {
         std::vector<std::string> result;
@@ -97,15 +168,9 @@ private:
         return result;
     }
 
-    struct client_info {
-        int id;
-        std::string name;
-        std::string password;
-    };
-
-    std::unordered_map<int, client_info> clients_;
     tcp::socket socket_;
     chat_message read_msg_;
+	std::uint64_t client_id_;
 };
 
 class chat_server {
@@ -137,16 +202,15 @@ int main(int argc, char* argv[]) {
             io_context.run();
         }
         else {
+            short port = std::atoi(argv[1]);
+            if (port <= 0 || port > 65535) {
+                std::cerr << "Invalid port number\n";
+                return 1;
+            }
 
-        short port = std::atoi(argv[1]);
-        if (port <= 0 || port > 65535) {
-            std::cerr << "Invalid port number\n";
-            return 1;
-        }
-
-        boost::asio::io_context io_context;
-        chat_server server(io_context, port);
-        io_context.run();
+            boost::asio::io_context io_context;
+            chat_server server(io_context, port);
+            io_context.run();
         }
     }
     catch (std::exception& e) {
