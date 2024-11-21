@@ -1,4 +1,6 @@
 #include <cstdlib>
+#include<stdio.h>
+#include<conio.h>
 #include <deque>
 #include <iostream>
 #include <chrono>
@@ -50,12 +52,12 @@ private:
     void do_connect(const tcp::resolver::results_type& endpoints)
 
     {
-      
+
         boost::asio::async_connect(socket_, endpoints,
             [this](boost::system::error_code ec, tcp::endpoint) {
                 if (!ec) {
                     std::cout << "Connected to server.\n";
-                    ask_name();
+                    ask_initial_option();
                 }
                 else {
                     std::cerr << "Failed to connect to server: " << ec.message() << "\n";
@@ -63,29 +65,71 @@ private:
             });
     }
 
+    void ask_initial_option() {
+        char option = '0';
+        while (true) {
+            std::cout << "Choose an option:\n";
+            std::cout << "1. Register as a new user\n";
+            std::cout << "2. Login as an existing user\n";
+            std::cout << "Enter choice (1 or 2): \n";
+            std::cout << option << std::endl;
+            option = getchar();
+            
+            if (option == '1' || option == '2') {
+                break;
+            }
+            else {
+                std::cout << "Invalid option. Please choose 1 or 2.\n";
+            }
+        }
+        std::cout << "exit from loop" << std::endl;
+
+        if (option == '1') {
+            generate_unique_id();
+            ask_name();
+        }
+        else if (option == '2') {
+            ask_login();
+        }
+    }
+
+    void ask_login() {
+        std::uint64_t login_id;
+        std::string password;
+        std::cout << "Enter your registered ID: ";
+        std::cin >> login_id;
+        std::cin.ignore();
+        std::cout << "Enter your password: ";
+        std::getline(std::cin, password);
+
+        chat_message msg;
+        std::string login_info = std::to_string(login_id) + ":" + password;
+        msg.body_length(login_info.size());
+        std::memcpy(msg.body(), login_info.c_str(), msg.body_length());
+        msg.encode_header("#LOG", id_);
+        write(msg);
+
+        registered_ = true;
+        do_read_header();
+    }
+
     void ask_name() {
-  //      std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-  //      std::cout << "Enter your name: ";
-  //      std::flush(std::cout); // Ensure the prompt is displayed immediately
-  //      std::getline(std::cin, name_);
-		//std::cout << "Name entered: " << name_ << "\n";
-        name_ = "test";
+        std::cin.ignore();
+        std::cout << "Enter your name: ";
+        std::getline(std::cin, name_);
         ask_password();
     }
 
     void ask_password() {
-  //      std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-  //      std::cout << "Enter your password: ";
-  //      std::flush(std::cout); // Ensure the prompt is displayed immediately
-  //      std::getline(std::cin, password_);
-		//std::cout << "Password entered: " << password_ << "\n";
-		password_ = "test";
+        std::cout << "Enter your password: ";
+        std::getline(std::cin, password_);
         send_registration();
     }
 
+
     void send_registration() {
         chat_message msg;
-        std::string registration_info =  name_ + ":" + password_;
+        std::string registration_info = name_ + ":" + password_;
         msg.body_length(registration_info.size());
         std::memcpy(msg.body(), registration_info.c_str(), msg.body_length());
         msg.encode_header("#REG", id_);
@@ -105,58 +149,58 @@ private:
                     if (read_msg_.get_message_id() == "#REG" || read_msg_.get_message_id() == "#S_C") {
                         do_read_body();
                     }
-					else if (read_msg_.get_message_id() == "#C_C") {
-						std::uint64_t reciever = read_msg_.get_sender_id();
+                    else if (read_msg_.get_message_id() == "#C_C") {
+                        std::uint64_t reciever = read_msg_.get_sender_id();
                         char decesion;
-						bool f = true;
+                        bool f = true;
                         while (f == true) {
-                            
+
                             std::cout << "Do you want to chat with " << reciever << "? (y/n)";
                             std::cin >> decesion;
                             if (decesion == 'y') {
                                 message(*this, "#C_A", "Chat request accepted", reciever);
-								std::cout << "Chat request accepted.\n";
-								reciever_id_ = reciever;
+                                std::cout << "Chat request accepted.\n";
+                                reciever_id_ = reciever;
                                 f = false;
-                                
+
                             }
                             else if (decesion == 'n') {
-								message(*this, "#C_D", "Chat request denied", reciever);
-								std::cout << "Chat request denied.\n";
+                                message(*this, "#C_D", "Chat request denied", reciever);
+                                std::cout << "Chat request denied.\n";
                                 f = false;
-							}
-							else {
-								std::cout << "Invalid input. Please enter 'y' or 'n'." << std::endl;
+                            }
+                            else {
+                                std::cout << "Invalid input. Please enter 'y' or 'n'." << std::endl;
                             }
                         }
                         do_read_header();
-					}
-					else if (read_msg_.get_message_id() == "#S_M") {
-						if (read_msg_.get_sender_id() == reciever_id_) {
+                    }
+                    else if (read_msg_.get_message_id() == "#S_M") {
+                        if (read_msg_.get_sender_id() == reciever_id_) {
                             do_read_body();
-						}
-                        else {
-							std::cout << "Message from unknown sender\n";
-							read_msg_ = chat_message(); // Clear all data in read_msg_
-							do_read_header();
                         }
-					}
+                        else {
+                            std::cout << "Message from unknown sender\n";
+                            read_msg_ = chat_message(); // Clear all data in read_msg_
+                            do_read_header();
+                        }
+                    }
                     else if (read_msg_.get_message_id() == "#C_A") {
-						reciever_id_ = read_msg_.get_sender_id();
-						do_read_body();
+                        reciever_id_ = read_msg_.get_sender_id();
+                        do_read_body();
                     }
                     else if (read_msg_.get_message_id() == "#C_D") {
                         std::cout << "chat request denied\n";
                         reciever_id_ = 0;
-						do_read_body();
+                        do_read_body();
                     }
                     else if (read_msg_.get_message_id() == "#S_C") {
                         do_read_body();
                     }
                     else {
                         std::cout << "unknown format " << read_msg_.get_message_id() << std::endl;
-						read_msg_ = chat_message(); // Clear all data in read_msg_
-						do_read_header();
+                        read_msg_ = chat_message(); // Clear all data in read_msg_
+                        do_read_header();
                     }
                 }
                 else {
@@ -227,20 +271,20 @@ void message(chat_client& c, std::string message_id, std::string line = "", std:
         reciever = c.getreciever_id();
     }
     else {
-		reciever = receiver_id;
+        reciever = receiver_id;
     }
     msg.encode_header(message_id, c.getid_(), reciever);
     c.write(msg);
-	std::cout << "reciever id: " << reciever << std::endl;
-	std::cout << "Message sent to server.\n";
+    std::cout << "reciever id: " << reciever << std::endl;
+    std::cout << "Message sent to server.\n";
 }
 
 int main(int argc, char* argv[]) {
     try {
-       /* if (argc != 3) {
-            std::cerr << "Usage: chat_client <host> <port>\n";
-            return 1;
-        }*/
+        /* if (argc != 3) {
+             std::cerr << "Usage: chat_client <host> <port>\n";
+             return 1;
+         }*/
 
         boost::asio::io_context io_context;
         tcp::resolver resolver(io_context);
@@ -255,9 +299,9 @@ int main(int argc, char* argv[]) {
                 c.close();
                 break;
             }
-			else if (line == "#S_C") {
-				message(c, "#S_C");
-			}
+            else if (line == "#S_C") {
+                message(c, "#S_C");
+            }
             else if (line == "#C_C") {
                 std::uint64_t reciever;
                 std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
@@ -267,7 +311,7 @@ int main(int argc, char* argv[]) {
                 message(c, "#C_C", line, reciever);
             }
             else if (line == "#S_M") {
-				std::uint64_t reciever = c.getreciever_id();
+                std::uint64_t reciever = c.getreciever_id();
                 std::cout << "enter message: ";
                 std::string msg;
                 std::getline(std::cin, msg);
